@@ -19,6 +19,7 @@ services:
     build: .
     environment:
       ANALYTICS_BACKEND: postgres
+      ANALYTICS_DATASET: ${ANALYTICS_DATASET:-demo}
       ANALYTICS_PG_HOST: db
       ANALYTICS_PG_PASSWORD: ${ANALYTICS_READER_PASSWORD:-local-reader-demo-only}
       ANALYTICS_MODE: ${ANALYTICS_MODE:-demo}
@@ -47,6 +48,7 @@ services:
     command: [streamlit, run, /app/src/analytics_agent/ui.py, --server.address=0.0.0.0, --server.port=8501, --server.headless=true, --browser.gatherUsageStats=false]
     environment:
       ANALYTICS_API_URL: http://api:8000
+      ANALYTICS_DATASET: ${ANALYTICS_DATASET:-demo}
     depends_on:
       api:
         condition: service_healthy

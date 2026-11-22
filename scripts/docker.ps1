@@ -6,7 +6,7 @@ if ($DockerCommand) {
 } else {
     $DockerPath = Join-Path $env:LOCALAPPDATA 'Programs\DockerDesktop\resources\bin\docker.exe'
     if (-not (Test-Path -LiteralPath $DockerPath -PathType Leaf)) {
-        throw 'Le client Docker est introuvable. Vérifiez le PATH ou l’installation de Docker Desktop.'
+        throw "Le client Docker est introuvable. Vérifiez le PATH ou l’installation de Docker Desktop."
     }
 }
 & $DockerPath @DockerArgs

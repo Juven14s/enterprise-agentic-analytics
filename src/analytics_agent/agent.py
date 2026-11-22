@@ -11,7 +11,16 @@ from langsmith import Client, trace, tracing_context
 
 from analytics_agent.catalog import ContextDocument, SchemaRetriever
 from analytics_agent.database import ExecutionError
-from analytics_agent.models import Analysis, Chart, QueryResult, RetailQuery, Stage, Usage
+from analytics_agent.models import (
+    Analysis,
+    Chart,
+    OnlineRetailScope,
+    QueryResult,
+    RetailQuery,
+    Stage,
+    Usage,
+)
+from analytics_agent.online_retail import SOURCE, OnlineRetailPlan
 from analytics_agent.planners import Planner, PlannerError, RetailPlan, make_retail_plan
 from analytics_agent.policy import PolicyError, SQLPolicy
 from analytics_agent.retail import retail_sources
@@ -54,6 +63,7 @@ class State(TypedDict, total=False):
     answer: str
     valid_sql: bool
     interpretation: RetailQuery | None
+    online_retail_scope: OnlineRetailScope | None
     clarification: str | None
     usage: Usage
     usage_complete: bool
@@ -210,6 +220,8 @@ class AnalyticsAgent:
         }
         if isinstance(plan, RetailPlan):
             base |= {"interpretation": plan.interpretation, "clarification": plan.clarification}
+        if isinstance(plan, OnlineRetailPlan):
+            base |= {"online_retail_scope": plan.scope, "clarification": plan.clarification}
         if plan.action != "query":
             return base | {
                 "route": "end",
@@ -223,6 +235,7 @@ class AnalyticsAgent:
         retry = (
             error.repairable
             and state.get("interpretation") is None
+            and state.get("online_retail_scope") is None
             and state["attempts"] <= self.settings.max_corrections
         )
         denied = (isinstance(error, PolicyError) and not error.repairable) or (
@@ -265,6 +278,13 @@ class AnalyticsAgent:
         result = state["result"]
         assert result is not None
         answer, chart = summarize(result)
+        if state.get("online_retail_scope"):
+            amount, invoices = result.rows[0]
+            answer = (
+                f"Le panier moyen est de {str(amount).replace('.', ',')} £ sur {invoices} factures."
+                if amount is not None
+                else "Aucune facture éligible sur ce périmètre."
+            )
         interpretation = state.get("interpretation")
         if interpretation and interpretation.absence and result.rows:
             regions = ", ".join(str(row[0]) for row in result.rows)
@@ -310,6 +330,12 @@ class AnalyticsAgent:
             ) / 1_000_000
         status = state["status"]
         interpretation = state.get("interpretation")
+        online_retail_scope = state.get("online_retail_scope")
+        sources = [doc.id for doc in state.get("context", [])]
+        if interpretation:
+            sources = retail_sources(interpretation)
+        if online_retail_scope:
+            sources = [SOURCE]
         if status == "answered":
             answer = state["answer"]
         else:
@@ -322,9 +348,8 @@ class AnalyticsAgent:
             result=state.get("result"),
             chart=state.get("chart"),
             interpretation=interpretation,
-            sources=retail_sources(interpretation)
-            if interpretation
-            else [doc.id for doc in state.get("context", [])],
+            online_retail_scope=online_retail_scope,
+            sources=sources,
             attempts=state["attempts"],
             corrections=max(0, state["attempts"] - 1),
             valid_sql=state["valid_sql"],

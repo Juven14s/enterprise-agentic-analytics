@@ -1,6 +1,42 @@
 # Enterprise Agentic Analytics
 
-AI-2 permet de suivre les ventes sans écrire de SQL. Le parcours principal calcule trois indicateurs sur les ventes fictives de janvier à mars 2025. Il fonctionne sans clé API.
+AI-2 permet d’interroger des ventes en français et de vérifier le résultat dans PostgreSQL. Le mode Online Retail utilise un modèle local et des données réelles. La démo utilise des ventes fictives et fonctionne également sans clé API.
+
+## Online Retail
+
+Demande « Quel était le panier moyen au Royaume-Uni en novembre 2011 ? » dans Streamlit. Le calcul SQL de référence donne **532,27 £ sur 2 490 factures**. Ce mode couvre un indicateur, un pays et les douze mois complets de décembre 2010 à novembre 2011. Utilise un mois accompagné de son année ou le format `AAAA-MM`. Les comparaisons et filtres supplémentaires nécessitent une reformulation. [Interface Streamlit](http://127.0.0.1:8572)
+
+1. Qwen3 4B lit la question et appelle un outil structuré avec le mois demandé.
+2. LangGraph vérifie le mois et transmet une requête SQL prédéfinie à SQLGlot puis à PostgreSQL. L’application se connecte avec le rôle de lecture.
+3. Streamlit affiche le montant en livres sterling, le nombre de factures, le mois, la définition, la requête et les étapes du calcul.
+
+Le panier moyen divise le montant des lignes éligibles par le nombre de factures distinctes. Une ligne est éligible si sa facture ne commence pas par `C` et si sa quantité et son prix unitaire sont strictement positifs. Le mois est filtré du premier jour inclus au premier jour du mois suivant exclu. Décembre 2011 est partiel. L’import conserve les 541 909 lignes de la source, avec les cinq colonnes utiles au calcul. Jeu de données de Daqing Chen (2015), CC BY 4.0. [UCI Online Retail](https://doi.org/10.24432/C5BW33)
+
+### Démarrer localement
+
+Depuis la racine du dépôt, avec Python 3.12 et Docker Desktop démarré, exécute ces commandes PowerShell. Si `docker` est déjà dans le PATH, il remplace le script `./scripts/docker.ps1`.
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[import-retail,ui]"
+curl.exe -fL --create-dirs -o data/benchmarks/online-retail/uci.zip "https://archive.ics.uci.edu/static/public/352/online+retail.zip"
+./scripts/docker.ps1 compose up -d --wait db
+.\.venv\Scripts\python.exe scripts/import_online_retail.py data/benchmarks/online-retail/uci.zip
+./scripts/docker.ps1 compose -f compose.yaml -f compose.online-retail.yaml up -d --build --wait --wait-timeout 360
+```
+
+Le premier démarrage télécharge environ 2,4 Gio de poids. Le volume Docker conserve ces poids pour les relances. Après ce téléchargement, `$env:ANALYTICS_MODEL_OFFLINE = '1'` permet de démarrer le modèle à partir du cache. Les appels métier restent dans Docker et ne nécessitent ni clé API ni service payant.
+
+### Reproduire la vérification
+
+```powershell
+./scripts/docker.ps1 compose exec -T db psql -X -U analytics_reader -d analytics -c (Get-Content -Raw scripts/online_retail_reference.sql)
+.\.venv\Scripts\python.exe scripts/smoke_online_retail.py
+```
+
+La référence SQL calcule le montant de chaque facture avant de prendre la moyenne. Le test de bout en bout compare les résultats de l’API à cette référence et vérifie aussi le formulaire Streamlit, la clarification des questions incomplètes et le refus d’une modification.
+
+Sur le poste de test, les 13 questions sur les douze mois ont donné les montants et nombres de factures attendus. Les cinq cas hors périmètre se sont arrêtés avant toute requête SQL. La latence médiane des 13 analyses était de 4,0 s, avec un maximum de 7,7 s. Le coût d’API était nul.
 
 ## Démo
 

@@ -1,7 +1,7 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from starlette.concurrency import run_in_threadpool
 
 from analytics_agent.factory import retail_agent
@@ -30,7 +30,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/v1/retail", response_model=Analysis)
     async def analyze_retail(body: RetailQuery, request: Request):
-        return await run_in_threadpool(request.app.state.agent.ask, body)
+        agent = request.app.state.agent
+        if agent.settings.dataset != "demo":
+            raise HTTPException(
+                status_code=404, detail="Formulaire indisponible sur ce jeu de données."
+            )
+        return await run_in_threadpool(agent.ask, body)
 
     return app
 

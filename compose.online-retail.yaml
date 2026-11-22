@@ -1,0 +1,47 @@
+services:
+  model:
+    image: ghcr.io/ggml-org/llama.cpp@sha256:ae28f5c2046de51dfd00c9116a36fe44b5e8703ef730d0aea69082781eecb1f7
+    command:
+      - -hf
+      - unsloth/Qwen3-4B-Instruct-2507-GGUF:Q4_K_M
+      - --alias
+      - qwen3-4b-instruct
+      - --jinja
+      - --ctx-size
+      - '4096'
+      - --parallel
+      - '1'
+      - --threads
+      - '6'
+      - --host
+      - 0.0.0.0
+      - --port
+      - '8080'
+    volumes:
+      - ai2-huggingface-cache:/root/.cache/huggingface
+    environment:
+      LLAMA_ARG_OFFLINE: ${ANALYTICS_MODEL_OFFLINE:-0}
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, http://127.0.0.1:8080/health]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+  api:
+    environment:
+      ANALYTICS_DATASET: online_retail
+      ANALYTICS_MODE: llm
+      ANALYTICS_LLM_MODEL: qwen3-4b-instruct
+      ANALYTICS_LLM_BASE_URL: http://model:8080/v1
+      ANALYTICS_LLM_TIMEOUT_SECONDS: '75'
+      ANALYTICS_INPUT_USD_PER_MILLION: '0'
+      ANALYTICS_OUTPUT_USD_PER_MILLION: '0'
+      ANALYTICS_LANGSMITH: 'false'
+    depends_on:
+      model:
+        condition: service_healthy
+  ui:
+    environment:
+      ANALYTICS_DATASET: online_retail
+
+volumes:
+  ai2-huggingface-cache:

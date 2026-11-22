@@ -48,6 +48,13 @@ class QueryResult(BaseModel):
     truncated: bool
 
 
+class OnlineRetailScope(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    month: Annotated[str, StringConstraints(pattern=r"^(2010-12|2011-(0[1-9]|1[01]))$")]
+    country: Literal["United Kingdom"] = "United Kingdom"
+
+
 class Chart(BaseModel):
     kind: Literal["bar", "line"]
     x: str
@@ -75,6 +82,7 @@ class Analysis(BaseModel):
     result: QueryResult | None = None
     chart: Chart | None = None
     interpretation: RetailQuery | None = None
+    online_retail_scope: OnlineRetailScope | None = None
     sources: list[str] = Field(default_factory=list)
     attempts: int = 0
     corrections: int = 0

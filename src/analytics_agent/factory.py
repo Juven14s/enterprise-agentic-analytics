@@ -5,6 +5,7 @@ from tempfile import TemporaryDirectory
 from analytics_agent.agent import AnalyticsAgent
 from analytics_agent.catalog import Catalog, SchemaRetriever
 from analytics_agent.database import PostgresDatabase, SQLiteDatabase, seed_sqlite
+from analytics_agent.online_retail import OnlineRetailPlanner
 from analytics_agent.planners import LLMPlanner, RetailPlanner
 from analytics_agent.policy import SQLPolicy
 from analytics_agent.settings import Settings
@@ -34,6 +35,13 @@ def sqlite_db(path: Path, catalog: Catalog, settings: Settings) -> SQLiteDatabas
 
 @contextmanager
 def retail_agent(settings: Settings):
+    if settings.dataset == "online_retail":
+        database = PostgresDatabase(
+            SQLPolicy("postgres", "online_retail", frozenset({"invoice_lines"})), settings
+        )
+        database.execute("SELECT invoice_no FROM invoice_lines LIMIT 1")
+        yield AnalyticsAgent(None, OnlineRetailPlanner(settings), database, settings)
+        return
     catalog = Catalog.retail()
     if settings.backend == "postgres":
         database = PostgresDatabase(

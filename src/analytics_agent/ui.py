@@ -5,6 +5,8 @@ import httpx
 import streamlit as st
 
 from analytics_agent.models import Analysis, RetailQuery
+from analytics_agent.online_retail import EXAMPLES as ONLINE_RETAIL_EXAMPLES
+from analytics_agent.online_retail import METRIC_DEFINITION, SOURCE
 from analytics_agent.retail import GROUP_LABELS, METRIC_LABELS, STATUS_LABELS
 
 EXAMPLES = (
@@ -55,6 +57,9 @@ def display_analysis(analysis: Analysis) -> None:
         if query.group_by:
             details.append(f"Par {GROUP_LABELS[query.group_by]}")
         st.caption(" · ".join(details))
+    if scope := analysis.online_retail_scope:
+        st.caption(f"Royaume-Uni · {scope.month} · livres sterling")
+        st.caption(METRIC_DEFINITION)
     result, chart = analysis.result, analysis.chart
     if result and result.rows:
         st.dataframe(
@@ -74,7 +79,9 @@ def display_analysis(analysis: Analysis) -> None:
     with st.expander("Vérifier la requête et les étapes"):
         if analysis.sql:
             st.code(analysis.sql, language="sql")
-        if analysis.sources:
+        if analysis.online_retail_scope:
+            st.markdown(f"[Source des données · UCI Online Retail]({SOURCE})")
+        elif analysis.sources:
             st.text("Références du catalogue : " + ", ".join(analysis.sources))
         st.dataframe([stage.model_dump() for stage in analysis.trace], hide_index=True)
         st.caption(
@@ -83,8 +90,8 @@ def display_analysis(analysis: Analysis) -> None:
         )
 
 
-def question_form() -> str | None:
-    example = st.selectbox("Exemples", ("", *EXAMPLES), format_func=lambda s: s or "Choisir…")
+def question_form(examples: tuple[str, ...] = EXAMPLES) -> str | None:
+    example = st.selectbox("Exemples", ("", *examples), format_func=lambda s: s or "Choisir…")
     if st.session_state.get("last_example") != example:
         st.session_state.last_example = example
         if example:
@@ -142,16 +149,20 @@ def guided_form() -> RetailQuery | None:
 def main() -> None:
     st.set_page_config(page_title="Analyse des ventes", layout="wide")
     st.title("Analyse des ventes")
-    st.caption(
-        "Chiffre d’affaires, commandes et panier moyen sur des ventes fictives "
-        "de janvier à mars 2025."
-    )
-    question_tab, guided_tab = st.tabs(["Poser une question", "Utiliser le formulaire"])
-    with question_tab:
-        question = question_form()
-    with guided_tab:
-        guided = guided_form()
-    inquiry = question if question is not None else guided
+    if os.environ.get("ANALYTICS_DATASET") == "online_retail":
+        st.caption("Panier moyen mensuel au Royaume-Uni, de décembre 2010 à novembre 2011.")
+        inquiry = question_form(ONLINE_RETAIL_EXAMPLES)
+    else:
+        st.caption(
+            "Chiffre d’affaires, commandes et panier moyen sur des ventes fictives "
+            "de janvier à mars 2025."
+        )
+        question_tab, guided_tab = st.tabs(["Poser une question", "Utiliser le formulaire"])
+        with question_tab:
+            question = question_form()
+        with guided_tab:
+            guided = guided_form()
+        inquiry = question if question is not None else guided
     if inquiry is not None:
         st.session_state.pop("analysis_result", None)
         if isinstance(inquiry, str) and len(inquiry) < 3:

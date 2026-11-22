@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     )
 
     backend: Literal["sqlite", "postgres"] = "sqlite"
+    dataset: Literal["demo", "online_retail"] = "demo"
     mode: Literal["demo", "llm"] = "demo"
     pg_host: str = "localhost"
     pg_port: int = Field(default=5432, ge=1, le=65535)
@@ -36,6 +37,12 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def check_credentials(self):
+        if self.dataset == "online_retail" and (
+            self.backend != "postgres" or self.mode != "llm" or not self.llm_base_url
+        ):
+            raise ValueError(
+                "Online Retail requires PostgreSQL and an explicit local LLM endpoint."
+            )
         if self.mode == "llm" and not self.openai_api_key and not self.llm_base_url:
             raise ValueError("Set OPENAI_API_KEY or configure an OpenAI-compatible endpoint.")
         if self.langsmith and not self.langsmith_api_key:
