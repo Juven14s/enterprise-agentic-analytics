@@ -5,7 +5,7 @@ from fastapi import FastAPI, Request
 from starlette.concurrency import run_in_threadpool
 
 from analytics_agent.factory import retail_agent
-from analytics_agent.models import Analysis, Question
+from analytics_agent.models import Analysis, Question, RetailQuery
 from analytics_agent.settings import Settings
 
 
@@ -27,6 +27,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def analyze(body: Question, request: Request):
         agent = request.app.state.agent
         return await run_in_threadpool(agent.ask, body.question)
+
+    @app.post("/v1/retail", response_model=Analysis)
+    async def analyze_retail(body: RetailQuery, request: Request):
+        return await run_in_threadpool(request.app.state.agent.ask, body)
 
     return app
 

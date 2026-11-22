@@ -1,4 +1,3 @@
-import re
 from typing import Literal, Protocol
 
 from langchain_openai import ChatOpenAI
@@ -6,7 +5,9 @@ from openai import APITimeoutError, OpenAIError
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from analytics_agent.catalog import ContextDocument, normalize
+from analytics_agent.models import RetailQuery
 from analytics_agent.policy import Dialect
+from analytics_agent.retail import DENIED, Clarification, compile_query, parse_question
 from analytics_agent.settings import Settings
 
 
@@ -27,6 +28,11 @@ class SQLPlan(BaseModel):
 
 class PlannerError(RuntimeError):
     pass
+
+
+class RetailPlan(SQLPlan):
+    interpretation: RetailQuery | None = None
+    clarification: str | None = None
 
 
 class Planner(Protocol):
@@ -101,61 +107,17 @@ class LLMPlanner:
             raise PlannerError("invalid_tool_response") from error
 
 
-DENIED_TERMS = re.compile(
-    r"\b(supprime\w*|efface\w*|modifie\w*|insere\w*|ajoute\w*|delete|drop|truncate|"
-    r"update|insert|alter|grant|revoke|mots? de passe|passwords?|secrets?|e-?mails?|courriels?)\b"
-)
-
-METRICS = (
-    (
-        r"chiffre d['’]affaires(?: net(?: ht)?)?|ca net|net revenue",
-        "ROUND(SUM(o.net_amount_cents) / 100.0, 2)",
-        "chiffre_affaires_eur",
-    ),
-    (
-        r"nombre de commandes (?:terminees|completees|finalisees)|completed orders",
-        "COUNT(*)",
-        "commandes_terminees",
-    ),
-    (
-        r"panier moyen(?: net)?|average order value",
-        "ROUND(AVG(o.net_amount_cents) / 100.0, 2)",
-        "panier_moyen_eur",
-    ),
-)
+def make_retail_plan(query: RetailQuery, dialect: Dialect) -> RetailPlan:
+    query = query.model_copy(update={"status": query.effective_status})
+    return RetailPlan(action="query", sql=compile_query(query, dialect), interpretation=query)
 
 
-class DemoPlanner:
+class RetailPlanner:
     def plan(self, question, context, dialect, previous_sql, feedback, evidence):
-        text = normalize(question).strip().rstrip(" ?!.")
-        if DENIED_TERMS.search(text):
-            return SQLPlan(action="refuse", sql=None), (0, 0)
-        for metric, expression, alias in METRICS:
-            match = re.fullmatch(
-                rf"(?:(?:quel est le|affiche le|montre le|calcule le) )?(?:{metric})"
-                r"(?: (?:par|by) (region|mois|month))?",
-                text,
-            )
-            if match:
-                sql = self.make_query(expression, alias, match[1], dialect)
-                return SQLPlan(action="query", sql=sql), (0, 0)
-        return SQLPlan(action="clarify", sql=None), (0, 0)
-
-    @staticmethod
-    def make_query(expression: str, alias: str, dimension: str | None, dialect: Dialect):
-        base = "FROM orders AS o"
-        filters = "WHERE o.status = 'completed'"
-        if dimension == "region":
-            base += " JOIN customers AS c ON o.customer_id = c.customer_id"
-            label = "c.region AS region, "
-        elif dimension:
-            month = (
-                "TO_CHAR(DATE_TRUNC('month', o.order_date), 'YYYY-MM')"
-                if dialect == "postgres"
-                else "STRFTIME('%Y-%m', o.order_date)"
-            )
-            label = f"{month} AS mois, "
-        else:
-            label = ""
-        grouping = " GROUP BY 1 ORDER BY 1" if dimension else ""
-        return f"SELECT {label}{expression} AS {alias} {base} {filters}{grouping}"
+        if DENIED.search(normalize(question)):
+            return RetailPlan(action="refuse", sql=None), (0, 0)
+        try:
+            query = parse_question(question)
+        except Clarification as error:
+            return RetailPlan(action="clarify", sql=None, clarification=str(error)), (0, 0)
+        return make_retail_plan(query, dialect), (0, 0)

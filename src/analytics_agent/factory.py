@@ -5,14 +5,15 @@ from tempfile import TemporaryDirectory
 from analytics_agent.agent import AnalyticsAgent
 from analytics_agent.catalog import Catalog, SchemaRetriever
 from analytics_agent.database import PostgresDatabase, SQLiteDatabase, seed_sqlite
-from analytics_agent.planners import DemoPlanner, LLMPlanner
+from analytics_agent.planners import LLMPlanner, RetailPlanner
 from analytics_agent.policy import SQLPolicy
 from analytics_agent.settings import Settings
 
 
 def make_agent(catalog: Catalog, database, settings: Settings) -> AnalyticsAgent:
-    planner = LLMPlanner(settings) if settings.mode == "llm" else DemoPlanner()
-    return AnalyticsAgent(SchemaRetriever(catalog), planner, database, settings)
+    if settings.mode == "llm":
+        return AnalyticsAgent(SchemaRetriever(catalog), LLMPlanner(settings), database, settings)
+    return AnalyticsAgent(None, RetailPlanner(), database, settings)
 
 
 def sqlite_db(path: Path, catalog: Catalog, settings: Settings) -> SQLiteDatabase:

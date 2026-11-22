@@ -9,6 +9,7 @@
     {"id": "orders_customer", "tables": ["orders", "customers"], "definition": "orders.customer_id = customers.customer_id. Plusieurs commandes pour un client."}
   ],
   "metrics": [
+    {"id": "order_count", "tables": ["orders"], "definition": "Nombre de commandes, order count. Une commande par ligne. Inclut tous les statuts sauf filtre explicite."},
     {"id": "net_revenue", "tables": ["orders"], "definition": "Chiffre d’affaires net HT, CA net, net revenue. Somme de net_amount_cents divisée par 100.0, uniquement sur les commandes completed. Unité EUR."},
     {"id": "completed_orders", "tables": ["orders"], "definition": "Nombre de commandes terminées, complétées, finalisées, completed orders. COUNT(*) sur les commandes au statut completed."},
     {"id": "average_order_value", "tables": ["orders"], "definition": "Panier moyen net, average order value. Moyenne de net_amount_cents divisée par 100.0, uniquement sur les commandes completed. Unité EUR."}

@@ -1,6 +1,21 @@
 # Validation locale
 
-## Démo retail
+## Parcours principal des ventes
+
+La recette couvre 32 scénarios sur le jeu retail fictif. Elle vérifie les valeurs calculées, les reformulations, les bornes incluses, les filtres combinés et le comportement sans données.
+
+| Mesure locale du 22 novembre 2026 | PostgreSQL dans Docker | SQLite |
+|---|---:|---:|
+| Analyses avec le résultat attendu | 18/18 | 18/18 |
+| Clarifications attendues | 10/10 | 10/10 |
+| Refus attendus | 4/4 | 4/4 |
+| Latence du calcul, moyenne / p95 | 11,9 / 25,3 ms | 5,1 / 9,6 ms |
+
+Les 34 tests automatisés passent. Un test ajoute une commande au jeu SQLite et repose la même question. Le CA du Nord en février monte de 150,00 à 187,50 EUR. Un autre test vérifie que le texte libre et le formulaire produisent les mêmes critères, le même SQL et le même montant. Le test Docker a exécuté les deux parcours depuis Streamlit et vérifié les privilèges de lecture et l’absence de SQL pour une demande ambiguë ou interdite.
+
+Le calcul métier par défaut et la génération SQL libre mesurée plus bas ont des périmètres différents. Le parcours ventes couvre les indicateurs et filtres décrits dans le README sur le schéma du projet. Les essais BIRD caractérisent le mode expérimental.
+
+## Première version de la démo retail
 
 La suite contient cinq questions analytiques, trois demandes hors périmètre et une question ambiguë. Elle compare les valeurs renvoyées à des résultats de référence établis à partir du jeu de données fictif. Les tests vérifient aussi le parcours HTTP, la qualification des tables, la troncature, la correction d’une colonne inconnue et l’arrêt après épuisement du budget de corrections.
 

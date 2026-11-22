@@ -11,9 +11,10 @@ from langsmith import Client, trace, tracing_context
 
 from analytics_agent.catalog import ContextDocument, SchemaRetriever
 from analytics_agent.database import ExecutionError
-from analytics_agent.models import Analysis, Chart, QueryResult, Stage, Usage
-from analytics_agent.planners import Planner, PlannerError
+from analytics_agent.models import Analysis, Chart, QueryResult, RetailQuery, Stage, Usage
+from analytics_agent.planners import Planner, PlannerError, RetailPlan, make_retail_plan
 from analytics_agent.policy import PolicyError, SQLPolicy
+from analytics_agent.retail import retail_sources
 from analytics_agent.settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,7 @@ MESSAGES = {
 LABELS = {
     "chiffre_affaires_eur": "Chiffre d’affaires net HT",
     "panier_moyen_eur": "Panier moyen net HT",
+    "commandes": "Nombre de commandes",
     "commandes_terminees": "Commandes terminées",
 }
 
@@ -37,7 +39,7 @@ class Database(Protocol):
 
 
 class State(TypedDict, total=False):
-    question: str
+    question: str | RetailQuery
     evidence: str | None
     context: list[ContextDocument]
     trace: list[Stage]
@@ -51,6 +53,8 @@ class State(TypedDict, total=False):
     chart: Chart | None
     answer: str
     valid_sql: bool
+    interpretation: RetailQuery | None
+    clarification: str | None
     usage: Usage
     usage_complete: bool
 
@@ -103,7 +107,11 @@ def summarize(result: QueryResult) -> tuple[str, Chart | None]:
 
 class AnalyticsAgent:
     def __init__(
-        self, retriever: SchemaRetriever, planner: Planner, database: Database, settings: Settings
+        self,
+        retriever: SchemaRetriever | None,
+        planner: Planner,
+        database: Database,
+        settings: Settings,
     ):
         self.retriever = retriever
         self.planner = planner
@@ -120,7 +128,9 @@ class AnalyticsAgent:
         graph.add_node("validate", self._validate)
         graph.add_node("execute", self._execute)
         graph.add_node("summarize", self._summarize)
-        graph.add_edge(START, "retrieve")
+        graph.add_conditional_edges(
+            START, self._initial_node, {"plan": "plan", "retrieve": "retrieve"}
+        )
         graph.add_edge("retrieve", "plan")
         graph.add_conditional_edges("plan", self._route, {"validate": "validate", "end": END})
         graph.add_conditional_edges(
@@ -135,6 +145,9 @@ class AnalyticsAgent:
     @staticmethod
     def _route(state: State) -> str:
         return state["route"]
+
+    def _initial_node(self, state: State) -> str:
+        return "retrieve" if self.retriever and isinstance(state["question"], str) else "plan"
 
     @staticmethod
     def _stage(state: State, name: str, code: str, started: float, attempt=None) -> list[Stage]:
@@ -151,6 +164,7 @@ class AnalyticsAgent:
     def _retrieve(self, state: State) -> State:
         started = perf_counter()
         search = state["question"]
+        assert self.retriever is not None and isinstance(search, str)
         if state.get("evidence"):
             search += " " + state["evidence"]
         context = self.retriever.retrieve(search)
@@ -160,15 +174,20 @@ class AnalyticsAgent:
         started = perf_counter()
         attempt = state["attempts"] + 1
         base: State = {"attempts": attempt, "checked": None, "valid_sql": False}
+        question = state["question"]
+        dialect = self.database.policy.dialect
         try:
-            plan, tokens = self.planner.plan(
-                state["question"],
-                state["context"],
-                self.database.policy.dialect,
-                state.get("candidate"),
-                state.get("feedback"),
-                state.get("evidence"),
-            )
+            if isinstance(question, RetailQuery):
+                plan, tokens = make_retail_plan(question, dialect), (0, 0)
+            else:
+                plan, tokens = self.planner.plan(
+                    question,
+                    state.get("context", []),
+                    dialect,
+                    state.get("candidate"),
+                    state.get("feedback"),
+                    state.get("evidence"),
+                )
         except PlannerError as error:
             return base | {
                 "route": "end",
@@ -186,6 +205,8 @@ class AnalyticsAgent:
             "candidate": plan.sql,
             "trace": self._stage(state, "plan", plan.action, started, attempt),
         }
+        if isinstance(plan, RetailPlan):
+            base |= {"interpretation": plan.interpretation, "clarification": plan.clarification}
         if plan.action != "query":
             return base | {
                 "route": "end",
@@ -196,7 +217,11 @@ class AnalyticsAgent:
     def _failed(
         self, state: State, stage: str, error: PolicyError | ExecutionError, started: float
     ) -> State:
-        retry = error.repairable and state["attempts"] <= self.settings.max_corrections
+        retry = (
+            error.repairable
+            and state.get("interpretation") is None
+            and state["attempts"] <= self.settings.max_corrections
+        )
         denied = (isinstance(error, PolicyError) and not error.repairable) or (
             error.code == "db_permission_denied"
         )
@@ -237,6 +262,13 @@ class AnalyticsAgent:
         result = state["result"]
         assert result is not None
         answer, chart = summarize(result)
+        interpretation = state.get("interpretation")
+        if (
+            interpretation
+            and interpretation.metric == "average_order_value"
+            and result.rows == [[None]]
+        ):
+            answer = "Aucune commande terminée sur ce périmètre pour calculer le panier moyen."
         return {
             "status": "answered",
             "answer": answer,
@@ -244,7 +276,7 @@ class AnalyticsAgent:
             "trace": self._stage(state, "summarize", "ok", started),
         }
 
-    def ask(self, question: str, *, evidence: str | None = None) -> Analysis:
+    def ask(self, question: str | RetailQuery, *, evidence: str | None = None) -> Analysis:
         started = perf_counter()
         request_id = str(uuid4())
         # Global LangSmith environment variables cannot log graph inputs or model payloads.
@@ -262,21 +294,29 @@ class AnalyticsAgent:
         usage = state["usage"]
         input_price = self.settings.input_usd_per_million
         output_price = self.settings.output_usd_per_million
-        if self.settings.mode == "demo":
+        if self.settings.mode == "demo" or isinstance(question, RetailQuery):
             usage.cost_usd = 0.0
         elif state["usage_complete"] and input_price is not None and output_price is not None:
             usage.cost_usd = (
                 usage.input_tokens * input_price + usage.output_tokens * output_price
             ) / 1_000_000
         status = state["status"]
+        interpretation = state.get("interpretation")
+        if status == "answered":
+            answer = state["answer"]
+        else:
+            answer = state.get("clarification") or MESSAGES[status]
         analysis = Analysis(
             request_id=request_id,
             status=status,
-            answer=state["answer"] if status == "answered" else MESSAGES[status],
+            answer=answer,
             sql=state.get("checked") if status == "answered" else None,
             result=state.get("result"),
             chart=state.get("chart"),
-            sources=[doc.id for doc in state["context"]],
+            interpretation=interpretation,
+            sources=retail_sources(interpretation)
+            if interpretation
+            else [doc.id for doc in state.get("context", [])],
             attempts=state["attempts"],
             corrections=max(0, state["attempts"] - 1),
             valid_sql=state["valid_sql"],

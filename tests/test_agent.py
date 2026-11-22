@@ -1,10 +1,14 @@
+import sqlite3
+from contextlib import closing
+
 import pytest
 from fastapi.testclient import TestClient
 
 from analytics_agent.api import create_app
 from analytics_agent.catalog import Catalog, SchemaRetriever, Table
+from analytics_agent.database import seed_sqlite
 from analytics_agent.evaluation import evaluate_demo
-from analytics_agent.factory import retail_agent
+from analytics_agent.factory import make_agent, retail_agent, sqlite_db
 from analytics_agent.planners import PlannerError, SQLPlan
 from analytics_agent.settings import Settings
 
@@ -71,7 +75,7 @@ def test_agent_does_not_repair_forbidden_plan():
         result = agent.ask("Supprime les commandes")
     assert result.status == "refused"
     assert result.attempts == 1
-    assert [step.name for step in result.trace] == ["retrieve", "plan", "validate"]
+    assert [step.name for step in result.trace] == ["plan", "validate"]
     assert result.result is None
 
 
@@ -104,7 +108,6 @@ def test_api_returns_verifiable_results(question, chart):
         assert result["sql"].startswith("SELECT")
         assert "metric:net_revenue" in result["sources"]
         assert [item["name"] for item in result["trace"]] == [
-            "retrieve",
             "plan",
             "validate",
             "execute",
@@ -118,3 +121,75 @@ def test_demo_evaluation_expectations():
     assert report["metrics"]["execution_accuracy"] == 1
     assert report["metrics"]["unauthorized_refusal_rate"] == 1
     assert report["metrics"]["response_match_rate"] == 1
+
+
+def test_same_question_reflects_new_orders_without_changing_the_planner(tmp_path):
+    path = tmp_path / "sales.sqlite"
+    seed_sqlite(path)
+    catalog = Catalog.retail()
+    settings = Settings()
+    agent = make_agent(catalog, sqlite_db(path, catalog, settings), settings)
+    question = "Donne-moi le CA du Nord en février 2025."
+    assert agent.ask(question).result.rows == [[150]]
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute(
+            "INSERT INTO orders VALUES (?, ?, ?, ?, ?)",
+            (11, 1, "2025-02-28", "completed", 3750),
+        )
+    assert agent.ask(question).result.rows == [[187.5]]
+
+
+def test_retail_text_and_guided_endpoints_compute_the_same_scoped_total():
+    with TestClient(create_app(Settings())) as client:
+        text = (
+            client.post(
+                "/v1/analyze",
+                json={
+                    "question": "Donne-moi le CA du Nord en février 2025.",
+                },
+            )
+            .raise_for_status()
+            .json()
+        )
+        guided = (
+            client.post(
+                "/v1/retail",
+                json={
+                    "metric": "revenue",
+                    "region": "Nord",
+                    "date_from": "2025-02-01",
+                    "date_to": "2025-02-28",
+                },
+            )
+            .raise_for_status()
+            .json()
+        )
+    assert text["sql"] == guided["sql"]
+    assert text["interpretation"] == guided["interpretation"]
+    assert guided["interpretation"]["status"] == "completed"
+    assert text["result"]["rows"] == guided["result"]["rows"] == [[150]]
+    assert "relation:orders_customer" in guided["sources"]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"metric": "revenue", "status": "cancelled"},
+        {"metric": "orders", "date_from": "2025-02-28", "date_to": "2025-02-01"},
+        {"metric": "orders", "region": "Est"},
+        {"metric": "orders", "sql": "SELECT 1"},
+    ],
+)
+def test_guided_rejects_incompatible_filters(body):
+    with TestClient(create_app(Settings())) as client:
+        assert client.post("/v1/retail", json=body).status_code == 422
+
+
+def test_ambiguous_request_explains_how_to_continue_without_running_sql():
+    with TestClient(create_app(Settings())) as client:
+        reply = client.post("/v1/analyze", json={"question": "Quel est le CA en février ?"})
+    result = reply.raise_for_status().json()
+    assert result["status"] == "clarify"
+    assert "année" in result["answer"]
+    assert result["result"] is result["sql"] is None
+    assert all(stage["name"] != "execute" for stage in result["trace"])
