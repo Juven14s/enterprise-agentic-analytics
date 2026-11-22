@@ -64,6 +64,14 @@ DEMO_CASES = (
     ("Efface les commandes annulées de février", "refused", None),
     ("Ça pour le Sud ?", "clarify", None),
     ("Montre l’évolution du CA en 2025.", "clarify", None),
+    ("Quelle région n’a aucune commande annulée ?", "answered", [["Nord"]]),
+    ("Quelles régions n’ont aucune commande en attente ?", "answered", [["Nord"], ["Ouest"]]),
+    (
+        "Liste les régions sans commande en attente en février 2025.",
+        "answered",
+        [["Nord"], ["Ouest"], ["Sud"]],
+    ),
+    ("Quelles régions n’ont aucune commande urgente ?", "clarify", None),
     (
         "Montre l’évolution du CA par mois en 2025.",
         "answered",
@@ -109,6 +117,8 @@ class Observation(BaseModel):
     output_tokens: int
     final_code: str | None = None
     reference_issue: str | None = None
+    database: str | None = None
+    difficulty: str | None = None
 
     @classmethod
     def from_answer(cls, case_id: str, expected: str, answer: Analysis, **scores):
@@ -203,9 +213,13 @@ def evaluate_bird(args: argparse.Namespace, settings: Settings):
     cases = candidates[: args.limit]
     if not cases:
         raise ValueError("The requested BIRD selection is empty.")
+    missing_ids = set(args.case_id or []) - {case.question_id for case in cases}
+    if missing_ids:
+        raise ValueError(f"BIRD case IDs missing from the evaluation: {sorted(missing_ids)}")
     databases = {}
     agents = {}
     checks: list[dict] = []
+    diagnostics: list[dict] = []
     observations = []
     for index, case in enumerate(cases, 1):
         if getattr(args, "progress", False):
@@ -217,7 +231,7 @@ def evaluate_bird(args: argparse.Namespace, settings: Settings):
         if case.db_id not in databases:
             flat = args.db_root / f"{case.db_id}.sqlite"
             path = flat if flat.is_file() else args.db_root / case.db_id / f"{case.db_id}.sqlite"
-            catalog = catalog_from_sqlite(path)
+            catalog = catalog_from_sqlite(path, value_samples=getattr(args, "value_samples", False))
             database = sqlite_db(path, catalog, settings)
             databases[case.db_id] = database
             if not args.reference_check:
@@ -264,8 +278,26 @@ def evaluate_bird(args: argparse.Namespace, settings: Settings):
                 answer,
                 execution_match=match,
                 reference_issue=issue,
+                database=case.db_id,
+                difficulty=case.difficulty,
             )
         )
+        if getattr(args, "diagnostics", False):
+            diagnostics.append(
+                {
+                    "id": case.question_id,
+                    "predicted_sql": answer.sql,
+                    "reference_sql": case.sql,
+                    "stages": [stage.model_dump() for stage in answer.trace],
+                }
+            )
+        if getattr(args, "progress", False):
+            verdict = "reference unavailable" if issue else "exact" if match else "inexact"
+            print(
+                f"  {answer.status} | {verdict} | {answer.latency_ms / 1000:.1f}s",
+                file=sys.stderr,
+                flush=True,
+            )
     if args.reference_check:
         return {
             "kind": "references_only",
@@ -274,7 +306,13 @@ def evaluate_bird(args: argparse.Namespace, settings: Settings):
             "references_matching_after_policy": sum(item["policy_code"] == "ok" for item in checks),
             "checks": checks,
         }
-    return {"metrics": metrics(observations), "cases": [item.model_dump() for item in observations]}
+    report = {
+        "metrics": metrics(observations),
+        "cases": [item.model_dump() for item in observations],
+    }
+    if diagnostics:
+        report["diagnostics"] = diagnostics
+    return report
 
 
 def main() -> None:
@@ -292,6 +330,16 @@ def main() -> None:
     bird.add_argument("--no-evidence", action="store_true")
     bird.add_argument("--reference-check", action="store_true")
     bird.add_argument("--progress", action="store_true", help="Log case IDs to stderr.")
+    bird.add_argument(
+        "--diagnostics",
+        action="store_true",
+        help="Include SQL for the public benchmark in the report.",
+    )
+    bird.add_argument(
+        "--value-samples",
+        action="store_true",
+        help="Add category examples from the public benchmark database.",
+    )
     args = parser.parse_args()
     if args.command == "bird":
         if args.limit < 1:
@@ -308,6 +356,8 @@ def main() -> None:
                 "suite": "bird_sqlite",
                 "mode": settings.mode,
                 "model": settings.llm_model if settings.mode == "llm" else None,
+                "llm_output": settings.llm_output if settings.mode == "llm" else None,
+                "public_value_samples": args.value_samples,
                 "ordered": args.ordered,
                 "evidence": not (args.no_evidence or args.reference_check),
                 "dataset": args.dataset.name,

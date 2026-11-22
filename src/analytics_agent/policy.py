@@ -20,7 +20,7 @@ NODES = frozenset(
 
 FUNCTIONS = frozenset(
     """
-    ABS AVG CEIL CEILING COALESCE COUNT CONCAT DATE DATE_ADD DATE_DIFF DATE_PART DATE_TRUNC
+    ABS AVG CEIL CEILING CHR COALESCE COUNT CONCAT DATE DATE_ADD DATE_DIFF DATE_PART DATE_TRUNC
     DATESTR_TO_DATE DATETIME DAY DENSE_RANK EXTRACT FIRST_VALUE FLOOR IF IFNULL JULIANDAY LAG
     INSTR LAST_VALUE LEAD LENGTH LEAST LOWER LTRIM MAX MIN MONTH NULLIF RANK REPLACE ROUND
     ROW_NUMBER RTRIM STR_TO_DATE STR_TO_TIME STRFTIME SUBSTR SUBSTRING SUM TIME_TO_STR
@@ -30,7 +30,7 @@ FUNCTIONS = frozenset(
 
 SQLITE_FUNCTIONS = frozenset(
     """
-    abs avg ceil ceiling coalesce concat count date datetime dense_rank first_value floor
+    abs avg ceil ceiling char coalesce concat count date datetime dense_rank first_value floor
     ifnull instr julianday lag last_value lead length like lower ltrim max min nullif rank replace
     round row_number rtrim strftime substr substring sum total trim unixepoch upper
 """.split()

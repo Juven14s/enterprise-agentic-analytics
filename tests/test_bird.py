@@ -1,6 +1,7 @@
 import json
 from argparse import Namespace
 
+from analytics_agent.bird import catalog_from_sqlite
 from analytics_agent.database import seed_sqlite
 from analytics_agent.evaluation import compare_results, evaluate_bird
 from analytics_agent.models import QueryResult
@@ -44,3 +45,13 @@ def test_evaluation_compares_duplicates_and_rejects_partial_results():
     assert not compare_results(first, second, ordered=True)
     assert not compare_results(first, second.model_copy(update={"rows": [[1], [2]]}), False)
     assert not compare_results(first, second.model_copy(update={"truncated": True}), False)
+
+
+def test_public_category_examples_are_optional_and_come_from_the_database(tmp_path):
+    path = tmp_path / "retail.sqlite"
+    seed_sqlite(path)
+    assert all(not table.examples for table in catalog_from_sqlite(path).tables)
+    tables = {table.name: table for table in catalog_from_sqlite(path, value_samples=True).tables}
+    assert set(tables["customers"].examples["region"]) == {"Nord", "Sud", "Ouest"}
+    assert set(tables["orders"].examples["status"]) == {"completed", "cancelled", "pending"}
+    assert "customer_id" not in tables["orders"].examples

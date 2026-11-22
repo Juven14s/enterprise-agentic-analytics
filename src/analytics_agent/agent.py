@@ -167,7 +167,10 @@ class AnalyticsAgent:
         assert self.retriever is not None and isinstance(search, str)
         if state.get("evidence"):
             search += " " + state["evidence"]
-        context = self.retriever.retrieve(search)
+        if self.settings.llm_output == "sql":
+            context = self.retriever.retrieve(search, top_k=8, include_relations=True)
+        else:
+            context = self.retriever.retrieve(search)
         return {"context": context, "trace": self._stage(state, "retrieve", "ok", started)}
 
     def _plan(self, state: State) -> State:
@@ -263,6 +266,11 @@ class AnalyticsAgent:
         assert result is not None
         answer, chart = summarize(result)
         interpretation = state.get("interpretation")
+        if interpretation and interpretation.absence and result.rows:
+            regions = ", ".join(str(row[0]) for row in result.rows)
+            answer = f"Régions correspondantes : {regions}."
+            if result.truncated:
+                answer += " Affichage partiel."
         if (
             interpretation
             and interpretation.metric == "average_order_value"
@@ -294,7 +302,7 @@ class AnalyticsAgent:
         usage = state["usage"]
         input_price = self.settings.input_usd_per_million
         output_price = self.settings.output_usd_per_million
-        if self.settings.mode == "demo" or isinstance(question, RetailQuery):
+        if self.settings.mode == "demo" or state.get("interpretation") is not None:
             usage.cost_usd = 0.0
         elif state["usage_complete"] and input_price is not None and output_price is not None:
             usage.cost_usd = (

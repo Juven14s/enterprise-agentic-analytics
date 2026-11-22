@@ -28,6 +28,8 @@ Arrêter la démo avec `docker compose stop`. Les services HTTP sont liés à la
 
 Tu peux filtrer sur le Nord, le Sud ou l’Ouest et demander un résultat par mois ou par région. Le nombre de commandes accepte aussi un regroupement par statut. Les dates de début et de fin sont incluses. Le champ texte comprend notamment une année, un mois avec son année, `2025-02` et des dates ISO comme « du 2025-02-03 au 2025-02-10 ». Utilise le formulaire pour une borne seule. Les périodes relatives, comparaisons et autres dimensions demandent une reformulation. Une période sans commandes produit un total nul ou un résultat groupé vide selon la question.
 
+Le champ texte sait aussi lister les régions sans commande d’un statut sur une période donnée. Exemple de question « Liste les régions sans commande en attente en février 2025. »
+
 ## Du besoin au résultat, étape par étape
 
 1. Une question écrite ou le formulaire fournit un indicateur, des filtres et un éventuel regroupement. Une demande ambiguë reçoit une clarification avant toute requête.
@@ -42,6 +44,8 @@ L’API accepte une question sur `POST /v1/analyze` ou des critères structurés
 La génération SQL libre et BIRD sont des expériences séparées. Le parcours métier décrit ci-dessus utilise son catalogue et ses règles de calcul directement. Les essais BIRD n’ont pas validé la qualité du mode LLM. Le formulaire reste disponible dans les deux modes.
 
 Copie `.env.example` vers `.env` et configure `ANALYTICS_MODE=llm`, `ANALYTICS_LLM_MODEL` et `OPENAI_API_KEY`, ou indique un `ANALYTICS_LLM_BASE_URL` compatible Chat Completions et tool calling. Pour un serveur local sur Windows avec Docker Desktop, utilise `http://host.docker.internal:<port>/v1` depuis Compose et `http://127.0.0.1:<port>/v1` hors conteneur. Lance de nouveau `docker compose up --build --wait -d`. Le fournisseur du LLM reçoit la question et le contexte du catalogue, avec la proposition SQL précédente lors d’une correction. La synthèse locale utilise les lignes SQL.
+
+Le réglage `ANALYTICS_LLM_OUTPUT=sql` permet d’utiliser un modèle spécialisé qui renvoie du SQL directement, comme XiYanSQL. Ses requêtes passent par le même validateur et le même rôle en lecture seule. Le [rapport de validation](docs/validation.md#essai-avec-xiyansql-7b) contient la commande de démarrage locale et les résultats de cet essai. Le réglage par défaut `tool` reste adapté aux modèles qui appellent des outils.
 
 Les tarifs par million de tokens sont configurables. Le coût LLM est estimé à partir des tarifs et de l’usage communiqué par le fournisseur. Une estimation indisponible apparaît comme `null`. Le mode démo affiche un coût fournisseur de zéro. Pour LangSmith, renseigne `ANALYTICS_LANGSMITH=true` et `LANGSMITH_API_KEY`. Les traces envoyées contiennent des métriques et des codes d’étape, sans questions, SQL ni lignes de résultat. [Instrumentation LangSmith](https://docs.langchain.com/langsmith/annotate-code)
 

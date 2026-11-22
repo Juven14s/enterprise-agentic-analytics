@@ -6,7 +6,7 @@
      "columns": {"customer_id": "Identifiant unique du client", "region": "Région du client, Nord, Sud ou Ouest"}}
   ],
   "relations": [
-    {"id": "orders_customer", "tables": ["orders", "customers"], "definition": "orders.customer_id = customers.customer_id. Plusieurs commandes pour un client."}
+    {"id": "orders_customer", "tables": ["orders", "customers"], "definition": "orders.customer_id = customers.customer_id. Plusieurs commandes par client et plusieurs clients par région. Pour une région sans commande d’un statut, vérifier l’absence de toute commande de ce statut pour tous les clients de la région."}
   ],
   "metrics": [
     {"id": "order_count", "tables": ["orders"], "definition": "Nombre de commandes, order count. Une commande par ligne. Inclut tous les statuts sauf filtre explicite."},

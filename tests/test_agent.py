@@ -193,3 +193,14 @@ def test_ambiguous_request_explains_how_to_continue_without_running_sql():
     assert "année" in result["answer"]
     assert result["result"] is result["sql"] is None
     assert all(stage["name"] != "execute" for stage in result["trace"])
+
+
+def test_regional_absence_is_checked_across_all_customers_in_the_region():
+    question = "Quelle région n’a aucune commande annulée ?"
+    with TestClient(create_app(Settings())) as client:
+        response = client.post("/v1/analyze", json={"question": question}).raise_for_status().json()
+    assert response["status"] == "answered"
+    assert response["interpretation"]["absence"] is True
+    assert response["interpretation"]["status"] == "cancelled"
+    assert "NOT EXISTS" in response["sql"]
+    assert response["result"]["rows"] == [["Nord"]]

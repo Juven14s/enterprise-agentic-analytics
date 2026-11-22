@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     pg_password: SecretStr = SecretStr("local-reader-demo-only")
     llm_model: str = "gpt-4.1-mini"
     llm_base_url: str | None = None
+    llm_output: Literal["tool", "sql"] = "tool"
     llm_timeout_seconds: int = Field(default=25, ge=1, le=90)
     openai_api_key: SecretStr | None = Field(default=None, validation_alias="OPENAI_API_KEY")
     langsmith: bool = False

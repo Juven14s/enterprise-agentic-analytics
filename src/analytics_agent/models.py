@@ -19,6 +19,7 @@ class RetailQuery(BaseModel):
     status: Literal["completed", "cancelled", "pending"] | None = None
     date_from: date | None = None
     date_to: date | None = None
+    absence: bool = False
 
     @model_validator(mode="after")
     def validate_scope(self):
@@ -28,6 +29,12 @@ class RetailQuery(BaseModel):
             self.status not in (None, "completed") or self.group_by == "status"
         ):
             raise ValueError("Les métriques de vente couvrent uniquement les commandes terminées.")
+        if self.absence and (
+            self.metric != "orders" or self.group_by != "region" or not self.status or self.region
+        ):
+            raise ValueError(
+                "Une recherche d’absence exige un statut et le regroupement par région."
+            )
         return self
 
     @property

@@ -37,7 +37,12 @@ def display_analysis(analysis: Analysis) -> None:
     else:
         st.text(analysis.answer)
     if query := analysis.interpretation:
-        details = [METRIC_LABELS[query.metric], query.region or "Toutes les régions"]
+        label = (
+            "Régions sans commande au statut indiqué"
+            if query.absence
+            else METRIC_LABELS[query.metric]
+        )
+        details = [label, query.region or "Toutes les régions"]
         details.append(STATUS_LABELS[query.status] if query.status else "Tous statuts")
         if query.date_from and query.date_to:
             details.append(f"Du {query.date_from:%d/%m/%Y} au {query.date_to:%d/%m/%Y} inclus")

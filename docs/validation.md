@@ -1,17 +1,19 @@
 # Validation locale
 
+Les résultats les plus récents du LLM sont décrits dans la section [XiYanSQL 7B](#essai-avec-xiyansql-7b).
+
 ## Parcours principal des ventes
 
-La recette couvre 32 scénarios sur le jeu retail fictif. Elle vérifie les valeurs calculées, les reformulations, les bornes incluses, les filtres combinés et le comportement sans données.
+La recette couvre 36 scénarios sur le jeu retail fictif. Elle vérifie les valeurs calculées, les reformulations, les bornes incluses, les filtres combinés, les absences par région et le comportement sans données.
 
 | Mesure locale du 22 novembre 2026 | PostgreSQL dans Docker | SQLite |
 |---|---:|---:|
-| Analyses avec le résultat attendu | 18/18 | 18/18 |
-| Clarifications attendues | 10/10 | 10/10 |
+| Analyses avec le résultat attendu | 21/21 | 21/21 |
+| Clarifications attendues | 11/11 | 11/11 |
 | Refus attendus | 4/4 | 4/4 |
-| Latence du calcul, moyenne / p95 | 11,9 / 25,3 ms | 5,1 / 9,6 ms |
+| Latence du calcul, moyenne / p95 | 11,3 / 22,7 ms | 11,0 / 22,8 ms |
 
-Les 34 tests automatisés passent. Un test ajoute une commande au jeu SQLite et repose la même question. Le CA du Nord en février monte de 150,00 à 187,50 EUR. Un autre test vérifie que le texte libre et le formulaire produisent les mêmes critères, le même SQL et le même montant. Le test Docker a exécuté les deux parcours depuis Streamlit et vérifié les privilèges de lecture et l’absence de SQL pour une demande ambiguë ou interdite.
+Les 40 tests automatisés passent. Un test ajoute une commande au jeu SQLite et repose la même question. Le CA du Nord en février monte de 150,00 à 187,50 EUR. Un autre test vérifie que le texte libre et le formulaire produisent les mêmes critères, le même SQL et le même montant. Le test Docker a exécuté les deux parcours depuis Streamlit et vérifié les privilèges de lecture et l’absence de SQL pour une demande ambiguë ou interdite.
 
 Le calcul métier par défaut et la génération SQL libre mesurée plus bas ont des périmètres différents. Le parcours ventes couvre les indicateurs et filtres décrits dans le README sur le schéma du projet. Les essais BIRD caractérisent le mode expérimental.
 
@@ -82,4 +84,54 @@ $env:ANALYTICS_MAX_CORRECTIONS = '1'
 $env:ANALYTICS_INPUT_USD_PER_MILLION = '0'
 $env:ANALYTICS_OUTPUT_USD_PER_MILLION = '0'
 analytics-eval --output artifacts/bird-qwen4b-holdout.json bird --dataset data/benchmarks/mini_dev_sqlite.jsonl --db-root data/benchmarks/dev_databases --case-id 49 --case-id 50 --case-id 53 --case-id 295 --case-id 296 --case-id 297 --progress
+```
+
+## Essai avec XiYanSQL 7B
+
+XiYanSQL-QwenCoder-7B-2504 Q4_K_M tourne localement avec llama.cpp. Le modèle reçoit les noms de colonnes, les types, les définitions et les relations issus du catalogue. Sa sortie est soumise à la même politique SQL, au même moteur en lecture seule et à une seule correction maximum. Les modèles à appels d’outils gardent leur adaptateur existant. [Modèle publié](https://huggingface.co/XGenerationLab/XiYanSQL-QwenCoder-7B-2504) · [Quantification utilisée](https://huggingface.co/mradermacher/XiYanSQL-QwenCoder-7B-2504-GGUF) · [Format de schéma](https://github.com/XGenerationLab/M-Schema)
+
+Douze questions inédites pour le projet sur `card_games`, `financial` et `student_club` ont été fixées avant le premier appel. Le test autorise 1 500 lignes et 15 s pour une requête SQLite, de manière identique pour les références et les prédictions. Les douze références renvoient le même résultat avant et après validation. Le modèle produit **9 requêtes exécutées sur 12**, et **1 résultat exact sur 12**. Il génère deux erreurs de colonne et refuse une question autorisée. La latence moyenne sur CPU est de 28,0 s avec un p95 de 83,1 s. Le coût API estimé est nul pour ces douze questions.
+
+Les erreurs observées portent surtout sur le choix des jointures, le sens des calculs et les valeurs utilisées pour filtrer. Une erreur sélectionne la table de traduction des collections pour une question sur les cartes. Une autre utilise un nom de région différent du libellé stocké. Les requêtes peuvent donc être valides et leurs résultats rester inexacts.
+
+Pour reproduire l’essai, prépare les bases indiquées avec le script d’extraction du README et démarre le modèle local.
+
+```powershell
+docker run -d --name ai2-xiyan-benchmark -p 127.0.0.1:8774:8080 --mount source=ai2-llama-models,target=/root/.cache/llama.cpp ghcr.io/ggml-org/llama.cpp@sha256:ae28f5c2046de51dfd00c9116a36fe44b5e8703ef730d0aea69082781eecb1f7 -hf mradermacher/XiYanSQL-QwenCoder-7B-2504-GGUF:Q4_K_M --alias xiyan-7b --jinja --ctx-size 4096 --parallel 1 --threads 6 --host 0.0.0.0 --port 8080
+curl.exe http://127.0.0.1:8774/health
+$env:ANALYTICS_MODE = 'llm'
+$env:ANALYTICS_LLM_MODEL = 'xiyan-7b'
+$env:ANALYTICS_LLM_OUTPUT = 'sql'
+$env:ANALYTICS_LLM_BASE_URL = 'http://127.0.0.1:8774/v1'
+$env:ANALYTICS_LLM_TIMEOUT_SECONDS = '90'
+$env:ANALYTICS_MAX_CORRECTIONS = '1'
+$env:ANALYTICS_TIMEOUT_MS = '15000'
+$env:ANALYTICS_MAX_ROWS = '1500'
+$env:ANALYTICS_INPUT_USD_PER_MILLION = '0'
+$env:ANALYTICS_OUTPUT_USD_PER_MILLION = '0'
+$cases = @(51,52,57,58,194,195,196,198,298,299,300,301) | ForEach-Object { '--case-id'; $_ }
+analytics-eval --output artifacts/bird-xiyan-acceptance.json bird --dataset data/benchmarks/mini_dev_sqlite.jsonl --db-root data/benchmarks/dev_databases @cases --progress --diagnostics
+```
+
+L’option `--value-samples` ajoute quelques valeurs catégorielles lues dans la base publique du benchmark. La collecte est bornée et réservée au CLI BIRD. L’option `--diagnostics` conserve les requêtes générées et les références pour permettre la comparaison. À réserver également au jeu public.
+
+Les six cas de l’essai Qwen3 4B ont été rejoués avec XiYanSQL et `--value-samples`. Les six requêtes s’exécutent et **1/6** donne le résultat exact. Le score rejoint celui de Qwen3 4B sur ces cas, avec un cas correct différent. Cet essai change à la fois le modèle et les exemples du catalogue, ce qui empêche d’attribuer le résultat à un seul de ces changements.
+
+### Recette en français sur PostgreSQL
+
+Le script `scripts/check_llm_retail.py` appelle l’API sur le rôle PostgreSQL de lecture. Les questions exigent notamment des comptes distincts, plusieurs indicateurs, des comparaisons de périodes et des conditions d’absence. Les demandes d’écriture ou de données interdites doivent être refusées avec un résultat et un SQL absents, sans étape d’exécution et sans jeton de modèle.
+
+Le premier passage de huit cas donne 7/8 résultats exacts et 3/3 refus. Le cas en échec demandait une région dépourvue de commandes annulées. La requête sélectionnait les régions ayant au moins une commande non annulée. Le catalogue a été précisé pour rendre explicite le grain de ce calcul.
+
+Avec le catalogue seul, le modèle répète l’erreur sur cette question et sur un second statut. Le parcours reconnaît désormais ce calcul explicite et vérifie l’absence par un `NOT EXISTS` corrélé à la région entière. Le script distingue ces réponses déterministes de celles qui proviennent du modèle.
+
+La recette finale obtient **9/9 résultats exacts** sur PostgreSQL, dont **7 générés par le LLM** et **2 calculés par la règle métier**. Les **3/3 refus** interviennent avant tout appel au modèle ou exécution SQL. Ce résultat valide le parcours testé sur le jeu de ventes fictif. Le passage à d’autres schémas reste à valider, avec 1/12 résultat exact sur le nouvel échantillon BIRD.
+
+Pour reproduire la recette locale depuis PowerShell, lance la démo Docker, démarre le serveur de modèle et relie son conteneur au réseau Compose s’il ne l’est pas déjà.
+Si le conteneur existe déjà, `docker start ai2-xiyan-benchmark` le relance avec son modèle en cache.
+
+```powershell
+docker network connect enterprise-agentic-analytics_default ai2-xiyan-benchmark
+Get-Content -Raw scripts/check_llm_retail.py |
+  docker compose exec -T -e ANALYTICS_MODE=llm -e ANALYTICS_LLM_OUTPUT=sql -e ANALYTICS_LLM_MODEL=xiyan-7b -e ANALYTICS_LLM_BASE_URL=http://ai2-xiyan-benchmark:8080/v1 -e ANALYTICS_LLM_TIMEOUT_SECONDS=90 -e ANALYTICS_MAX_CORRECTIONS=1 api python -
 ```

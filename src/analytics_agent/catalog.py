@@ -16,6 +16,7 @@ class Table(BaseModel):
     name: str
     description: str
     columns: dict[str, str]
+    examples: dict[str, list[str]] = {}
 
 
 class Definition(BaseModel):
@@ -50,14 +51,26 @@ class ContextDocument(BaseModel):
     id: str
     text: str
     schema_sql: str | None = None
+    schema_details: str | None = None
 
 
 def _tokens(value: str) -> list[str]:
     return re.findall(r"[a-z0-9]+", normalize(value))
 
 
-def _sql_identifier(name: str) -> str:
+def sql_identifier(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
+
+
+def _schema_details(table: Table) -> str:
+    lines = []
+    for name, description in table.columns.items():
+        meaning = " ".join(description.split())[:180]
+        if examples := table.examples.get(name):
+            meaning += f", Examples: {examples}"
+        lines.append(f"({sql_identifier(name)}:{meaning})")
+    columns = ",\n".join(lines)
+    return f"# Table: {sql_identifier(table.name)}\n[\n{columns}\n]"
 
 
 class SchemaRetriever:
@@ -67,12 +80,13 @@ class SchemaRetriever:
         table_docs = [
             ContextDocument(
                 id=f"table:{table.name}",
-                schema_sql=f"{_sql_identifier(table.name)} ("
-                + ", ".join(_sql_identifier(name) for name in table.columns)
+                schema_sql=f"{sql_identifier(table.name)} ("
+                + ", ".join(sql_identifier(name) for name in table.columns)
                 + ")",
-                text=f"Table {_sql_identifier(table.name)} — {table.description}\n"
+                schema_details=_schema_details(table),
+                text=f"Table {sql_identifier(table.name)} — {table.description}\n"
                 + "\n".join(
-                    f"{_sql_identifier(name)}: {description}"
+                    f"{sql_identifier(name)}: {description}"
                     for name, description in table.columns.items()
                 ),
             )
@@ -112,7 +126,9 @@ class SchemaRetriever:
                     matrix[row, self.vocabulary[token]] = 1
         return matrix
 
-    def retrieve(self, question: str, top_k: int = 5) -> list[ContextDocument]:
+    def retrieve(
+        self, question: str, top_k: int = 5, *, include_relations: bool = False
+    ) -> list[ContextDocument]:
         query = self._encode([question]) * self.weights
         faiss.normalize_L2(query)
         scores, indexes = self.index.search(query, min(top_k, len(self.documents)))
@@ -128,4 +144,10 @@ class SchemaRetriever:
         if len(self.table_docs) <= top_k:
             for document in self.table_docs.values():
                 selected.setdefault(document.id, document)
+        if include_relations:
+            for document in self.documents:
+                if document.id.startswith("relation:") and all(
+                    f"table:{name}" in selected for name in self.dependencies[document.id]
+                ):
+                    selected.setdefault(document.id, document)
         return list(selected.values())

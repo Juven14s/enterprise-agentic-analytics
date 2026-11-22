@@ -1,3 +1,4 @@
+import re
 from typing import Literal, Protocol
 
 from langchain_openai import ChatOpenAI
@@ -7,7 +8,13 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from analytics_agent.catalog import ContextDocument, normalize
 from analytics_agent.models import RetailQuery
 from analytics_agent.policy import Dialect
-from analytics_agent.retail import DENIED, Clarification, compile_query, parse_question
+from analytics_agent.retail import (
+    DENIED,
+    Clarification,
+    compile_query,
+    parse_question,
+    parse_regional_absence,
+)
 from analytics_agent.settings import Settings
 
 
@@ -48,18 +55,58 @@ class Planner(Protocol):
 
 
 class LLMPlanner:
-    def __init__(self, settings: Settings):
-        self.model = ChatOpenAI(
+    def __init__(self, settings: Settings, *, protect_retail: bool = False):
+        self.output = settings.llm_output
+        self.protect_retail = protect_retail
+        client = ChatOpenAI(
             model=settings.llm_model,
             api_key=settings.openai_api_key or "local",
             base_url=settings.llm_base_url,
             timeout=settings.llm_timeout_seconds,
             max_retries=0,
-            max_tokens=1500,
+            max_tokens=420 if self.output == "sql" else 1500,
             temperature=0 if settings.llm_base_url else None,
-        ).bind_tools([SQLPlan], tool_choice="required", parallel_tool_calls=False)
+        )
+        self.model = (
+            client.bind_tools([SQLPlan], tool_choice="required", parallel_tool_calls=False)
+            if self.output == "tool"
+            else client
+        )
 
     def plan(self, question, context, dialect, previous_sql, feedback, evidence):
+        if self.protect_retail and DENIED.search(normalize(question)):
+            return SQLPlan(action="refuse", sql=None), (0, 0)
+        if self.protect_retail:
+            try:
+                if absence := parse_regional_absence(question):
+                    return make_retail_plan(absence, dialect), (0, 0)
+            except Clarification as error:
+                return RetailPlan(action="clarify", sql=None, clarification=str(error)), (0, 0)
+        messages = (
+            self._sql_prompt(question, context, dialect, previous_sql, feedback, evidence)
+            if self.output == "sql"
+            else self._tool_prompt(question, context, dialect, previous_sql, feedback, evidence)
+        )
+        try:
+            response = self.model.invoke(messages)
+        except APITimeoutError as error:
+            raise PlannerError("model_timeout") from error
+        except (OpenAIError, ValueError) as error:
+            raise PlannerError("model_unavailable") from error
+        usage = response.usage_metadata
+        tokens = (usage["input_tokens"], usage["output_tokens"]) if usage else None
+        if self.output == "sql":
+            return self._parse_sql_output(response.content), tokens
+        calls = response.tool_calls
+        if response.invalid_tool_calls or len(calls) != 1 or calls[0]["name"] != SQLPlan.__name__:
+            raise PlannerError("invalid_tool_response")
+        try:
+            return SQLPlan.model_validate(calls[0]["args"]), tokens
+        except ValidationError as error:
+            raise PlannerError("invalid_tool_response") from error
+
+    @staticmethod
+    def _tool_prompt(question, context, dialect, previous_sql, feedback, evidence):
         prompt = (
             f"Plan one read-only {dialect} query using exactly one SQLPlan tool call. "
             "Use only the supplied tables and columns. Copy identifiers with their double quotes "
@@ -90,21 +137,57 @@ class LLMPlanner:
             payload += f"\n\nReference terminology:\n{evidence}"
         if feedback:
             payload += f"\n\nError: {feedback}\nPrevious SQL:\n{previous_sql}"
-        try:
-            response = self.model.invoke([("system", prompt), ("human", payload)])
-        except APITimeoutError as error:
-            raise PlannerError("model_timeout") from error
-        except (OpenAIError, ValueError) as error:
-            raise PlannerError("model_unavailable") from error
-        usage = response.usage_metadata
-        tokens = (usage["input_tokens"], usage["output_tokens"]) if usage else None
-        calls = response.tool_calls
-        if response.invalid_tool_calls or len(calls) != 1 or calls[0]["name"] != SQLPlan.__name__:
-            raise PlannerError("invalid_tool_response")
-        try:
-            return SQLPlan.model_validate(calls[0]["args"]), tokens
-        except ValidationError as error:
-            raise PlannerError("invalid_tool_response") from error
+        return [("system", prompt), ("human", payload)]
+
+    @staticmethod
+    def _sql_prompt(question, context, dialect, previous_sql, feedback, evidence):
+        # Preserve whole table definitions. Rank for selection and sort for a stable prefix.
+        tables = {}
+        remaining = 8_000
+        for document in context:
+            if not document.schema_details:
+                continue
+            block = document.schema_details
+            if len(block) > remaining:
+                block = document.schema_sql or ""
+            if block and len(block) <= remaining:
+                tables[document.id] = block
+                remaining -= len(block) + 1
+        notes = [
+            doc.text
+            for doc in sorted(context, key=lambda doc: doc.id)
+            if doc.schema_details is None and len(doc.text) <= 400
+        ]
+        schema = "\n".join(tables[key] for key in sorted(tables))
+        guidance = "\n".join(notes)[:1800]
+        engine = "SQLite" if dialect == "sqlite" else "PostgreSQL"
+        payload = (
+            f"Write a single read-only {engine} SELECT to answer the question. "
+            "Use the exact identifiers from the schema and only the requested columns. "
+            "Apply the terminology and business definitions. Return REFUSE for write requests "
+            "or forbidden data, and CLARIFY if the question needs more information.\n\n"
+            f"【Schema】\n{schema}\n\n【Definitions and foreign keys】\n{guidance}\n\n"
+            f"【Reference terminology】\n{evidence or ''}\n\n【Question】\n{question}"
+        )
+        if feedback:
+            payload += f"\n\nPrevious query to correct ({feedback}):\n{previous_sql}"
+        return [("human", payload + "\n\n```sql\n")]
+
+    @staticmethod
+    def _parse_sql_output(content) -> SQLPlan:
+        if not isinstance(content, str):
+            raise PlannerError("invalid_sql_response")
+        sql = content.strip()
+        fence = re.fullmatch(r"```(?:sql)?[ \t]*\r?\n(.+?)\r?\n```", sql, re.I | re.S)
+        if fence:
+            sql = fence[1].strip()
+        elif sql.endswith("\n```") and not sql.startswith("```"):
+            sql = sql[:-4].strip()
+        if sql.upper() in ("REFUSE", "CLARIFY"):
+            return SQLPlan(action=sql.lower(), sql=None)
+        if not sql or "```" in sql:
+            raise PlannerError("invalid_sql_response")
+        return SQLPlan(action="query", sql=sql)
 
 
 def make_retail_plan(query: RetailQuery, dialect: Dialect) -> RetailPlan:

@@ -119,7 +119,37 @@ def _period(text: str):
     return (None, None), text
 
 
+def parse_regional_absence(question: str) -> RetailQuery | None:
+    text = " ".join(normalize(question.replace("’", "'")).split())
+    match = re.fullmatch(
+        r"(?:quelles? regions?|(?:affiche|montre|liste) les regions) "
+        r"(?:n'(?:a|ont) aucune|sans(?: aucune)?) commandes? ([^?.!]+)(?:[?.!]\s*(.*))?",
+        text,
+    )
+    if not match:
+        return None
+    tail = (match[2] or "").strip().rstrip(".!?")
+    if tail and not re.fullmatch(
+        r"donne (?:uniquement la region|les regions par ordre alphabetique)", tail
+    ):
+        raise Clarification("Précise le statut des commandes et la période à examiner par région.")
+    (date_from, date_to), rest = _period(match[1])
+    status, rest = _take(rest, STATUSES, "Indique un seul statut de commande.")
+    if status in (None, "all") or set(rest.split()) - {"de", "en", "pour"}:
+        raise Clarification("Précise le statut dont tu veux vérifier l’absence par région.")
+    return RetailQuery(
+        metric="orders",
+        group_by="region",
+        status=status,
+        date_from=date_from,
+        date_to=date_to,
+        absence=True,
+    )
+
+
 def parse_question(question: str) -> RetailQuery:
+    if absence := parse_regional_absence(question):
+        return absence
     text = normalize(re.sub(r"\bça\b", "cela", question, flags=re.IGNORECASE).replace("’", "'"))
     text = re.sub(r"[,!?]", " ", text).strip().rstrip(".")
     text = re.sub(r"\s+", " ", text)
@@ -204,6 +234,11 @@ def compile_query(query: RetailQuery, dialect: Dialect) -> str:
     if query.date_to:
         filters.append(f"o.order_date <= '{query.date_to.isoformat()}'")
     where = " WHERE " + " AND ".join(filters) if filters else ""
+    if query.absence:
+        return (
+            "SELECT DISTINCT r.region FROM customers AS r WHERE NOT EXISTS "
+            f"(SELECT 1 {base}{where} AND c.region = r.region) ORDER BY r.region"
+        )
     dimension = dimensions[query.group_by] + ", " if query.group_by else ""
     grouping = " GROUP BY 1 ORDER BY 1" if query.group_by else ""
     return f"SELECT {dimension}{aggregates[query.metric]} {base}{where}{grouping}"
