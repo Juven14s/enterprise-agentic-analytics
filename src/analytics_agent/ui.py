@@ -5,8 +5,8 @@ import httpx
 import streamlit as st
 
 from analytics_agent.models import Analysis, RetailQuery
+from analytics_agent.online_retail import ELIGIBILITY, METRIC_DEFINITIONS, SOURCE
 from analytics_agent.online_retail import EXAMPLES as ONLINE_RETAIL_EXAMPLES
-from analytics_agent.online_retail import METRIC_DEFINITION, SOURCE
 from analytics_agent.retail import GROUP_LABELS, METRIC_LABELS, STATUS_LABELS
 
 EXAMPLES = (
@@ -58,8 +58,9 @@ def display_analysis(analysis: Analysis) -> None:
             details.append(f"Par {GROUP_LABELS[query.group_by]}")
         st.caption(" · ".join(details))
     if scope := analysis.online_retail_scope:
-        st.caption(f"Royaume-Uni · {scope.month} · livres sterling")
-        st.caption(METRIC_DEFINITION)
+        period = f"{scope.month} à {scope.month_to}" if scope.month_to else scope.month
+        st.caption(f"Royaume-Uni · {period}")
+        st.caption(f"{METRIC_DEFINITIONS[scope.metric]} {ELIGIBILITY}")
     result, chart = analysis.result, analysis.chart
     if result and result.rows:
         st.dataframe(
@@ -69,10 +70,17 @@ def display_analysis(analysis: Analysis) -> None:
         if chart:
             x, y = result.columns.index(chart.x), result.columns.index(chart.y)
             data = alt.Data(values=[{"x": row[x], "y": float(row[y])} for row in result.rows])
+            labels = {
+                "chiffre_affaires_gbp": "Chiffre d’affaires (£)",
+                "panier_moyen_gbp": "Panier moyen (£)",
+                "factures": "Nombre de factures",
+            }
+            x_title = "Mois" if chart.x == "mois" else chart.x
+            y_title = labels.get(chart.y, chart.y)
             plot = alt.Chart(data).encode(
-                x=alt.X("x:N", title=chart.x, sort=None if chart.kind == "bar" else "ascending"),
-                y=alt.Y("y:Q", title=chart.y),
-                tooltip=[alt.Tooltip("x:N", title=chart.x), alt.Tooltip("y:Q", title=chart.y)],
+                x=alt.X("x:N", title=x_title, sort=None if chart.kind == "bar" else "ascending"),
+                y=alt.Y("y:Q", title=y_title),
+                tooltip=[alt.Tooltip("x:N", title=x_title), alt.Tooltip("y:Q", title=y_title)],
             )
             mark = plot.mark_line(point=True) if chart.kind == "line" else plot.mark_bar()
             st.altair_chart(mark)
@@ -150,7 +158,7 @@ def main() -> None:
     st.set_page_config(page_title="Analyse des ventes", layout="wide")
     st.title("Analyse des ventes")
     if os.environ.get("ANALYTICS_DATASET") == "online_retail":
-        st.caption("Panier moyen mensuel au Royaume-Uni, de décembre 2010 à novembre 2011.")
+        st.caption("Ventes au Royaume-Uni, de décembre 2010 à novembre 2011 · UCI Online Retail")
         inquiry = question_form(ONLINE_RETAIL_EXAMPLES)
     else:
         st.caption(

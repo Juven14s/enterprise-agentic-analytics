@@ -3,6 +3,9 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
+RetailMetric = Literal["revenue", "orders", "average_order_value"]
+RetailMonth = Annotated[str, StringConstraints(pattern=r"^(2010-12|2011-(0[1-9]|1[01]))$")]
+
 
 class Question(BaseModel):
     question: Annotated[
@@ -13,7 +16,7 @@ class Question(BaseModel):
 class RetailQuery(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    metric: Literal["revenue", "orders", "average_order_value"]
+    metric: RetailMetric
     group_by: Literal["region", "month", "status"] | None = None
     region: Literal["Nord", "Sud", "Ouest"] | None = None
     status: Literal["completed", "cancelled", "pending"] | None = None
@@ -51,8 +54,21 @@ class QueryResult(BaseModel):
 class OnlineRetailScope(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    month: Annotated[str, StringConstraints(pattern=r"^(2010-12|2011-(0[1-9]|1[01]))$")]
+    month: RetailMonth
     country: Literal["United Kingdom"] = "United Kingdom"
+    metric: RetailMetric = "average_order_value"
+    month_to: RetailMonth | None = None
+    group_by_month: bool = False
+
+    @model_validator(mode="after")
+    def check_period(self):
+        if self.last_month < self.month:
+            raise ValueError("La période doit être dans l’ordre chronologique.")
+        return self
+
+    @property
+    def last_month(self) -> str:
+        return self.month_to or self.month
 
 
 class Chart(BaseModel):

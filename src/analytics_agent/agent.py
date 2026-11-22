@@ -38,6 +38,9 @@ LABELS = {
     "panier_moyen_eur": "Panier moyen net HT",
     "commandes": "Nombre de commandes",
     "commandes_terminees": "Commandes terminées",
+    "chiffre_affaires_gbp": "Chiffre d’affaires",
+    "panier_moyen_gbp": "Panier moyen",
+    "factures": "Nombre de factures",
 }
 
 
@@ -75,6 +78,14 @@ def _display(value) -> str:
     return str(value)[:120].replace("\n", " ")
 
 
+def _unit(column: str) -> str:
+    if column.endswith("_gbp"):
+        return " £"
+    if column.endswith("_eur"):
+        return " EUR"
+    return ""
+
+
 def summarize(result: QueryResult) -> tuple[str, Chart | None]:
     rows = result.rows
     if not rows:
@@ -83,9 +94,9 @@ def summarize(result: QueryResult) -> tuple[str, Chart | None]:
     suffix = " Affichage partiel : limite de lignes atteinte." if result.truncated else ""
     if len(rows) == len(columns) == 1 and not result.truncated:
         label = LABELS.get(columns[0], columns[0])
-        unit = " EUR" if columns[0].endswith("_eur") and rows[0][0] is not None else ""
+        unit = _unit(columns[0]) if rows[0][0] is not None else ""
         return f"{label} : {_display(rows[0][0])}{unit}.", None
-    if len(columns) == 2 and 2 <= len(rows) <= 30:
+    if len(columns) == 2 and (2 <= len(rows) <= 30 or (len(rows) == 1 and columns[0] == "mois")):
         values = [row[1] for row in rows]
         keys = [row[0] for row in rows]
         if (
@@ -106,7 +117,7 @@ def summarize(result: QueryResult) -> tuple[str, Chart | None]:
                 return f"{len(rows)} résultats affichés.{suffix}", chart
             best = max(range(len(values)), key=values.__getitem__)
             label = LABELS.get(columns[1], columns[1])
-            unit = " EUR" if columns[1].endswith("_eur") else ""
+            unit = _unit(columns[1])
             answer = (
                 f"{len(rows)} résultats. Maximum observé pour {label} : "
                 f"{_display(values[best])}{unit} ({_display(keys[best])})."
@@ -278,7 +289,8 @@ class AnalyticsAgent:
         result = state["result"]
         assert result is not None
         answer, chart = summarize(result)
-        if state.get("online_retail_scope"):
+        scope = state.get("online_retail_scope")
+        if scope and scope.metric == "average_order_value" and not scope.group_by_month:
             amount, invoices = result.rows[0]
             answer = (
                 f"Le panier moyen est de {str(amount).replace('.', ',')} £ sur {invoices} factures."

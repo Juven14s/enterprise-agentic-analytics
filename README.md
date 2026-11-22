@@ -1,16 +1,25 @@
 # Enterprise Agentic Analytics
 
-AI-2 permet d’interroger des ventes en français et de vérifier le résultat dans PostgreSQL. Le mode Online Retail utilise un modèle local et des données réelles. La démo utilise des ventes fictives et fonctionne également sans clé API.
+AI-2 permet d’explorer des ventes en français et de vérifier les chiffres affichés dans PostgreSQL. Le parcours Online Retail fonctionne sur des données réelles, avec un modèle local et sans clé API.
 
 ## Online Retail
 
-Demande « Quel était le panier moyen au Royaume-Uni en novembre 2011 ? » dans Streamlit. Le calcul SQL de référence donne **532,27 £ sur 2 490 factures**. Ce mode couvre un indicateur, un pays et les douze mois complets de décembre 2010 à novembre 2011. Utilise un mois accompagné de son année ou le format `AAAA-MM`. Les comparaisons et filtres supplémentaires nécessitent une reformulation. [Interface Streamlit](http://127.0.0.1:8572)
+Dans Streamlit, sélectionne un exemple ou saisis ta question. Le périmètre couvre les ventes au Royaume-Uni pendant les douze mois complets de décembre 2010 à novembre 2011. Tu peux demander un total sur une plage de mois ou une évolution mois par mois. [Interface Streamlit](http://127.0.0.1:8572)
 
-1. Qwen3 4B lit la question et appelle un outil structuré avec le mois demandé.
-2. LangGraph vérifie le mois et transmet une requête SQL prédéfinie à SQLGlot puis à PostgreSQL. L’application se connecte avec le rôle de lecture.
-3. Streamlit affiche le montant en livres sterling, le nombre de factures, le mois, la définition, la requête et les étapes du calcul.
+| Question | Résultat vérifié |
+|---|---|
+| Quel était le panier moyen en novembre 2011 ? | 532,27 £ sur 2 490 factures |
+| Quel était le chiffre d’affaires en novembre 2011 ? | 1 325 346,21 £ |
+| Combien de commandes en octobre 2011 ? | 1 811 factures |
+| Montre l’évolution du chiffre d’affaires de décembre 2010 à novembre 2011. | Courbe de 12 mois, avec un maximum en novembre 2011 |
 
-Le panier moyen divise le montant des lignes éligibles par le nombre de factures distinctes. Une ligne est éligible si sa facture ne commence pas par `C` et si sa quantité et son prix unitaire sont strictement positifs. Le mois est filtré du premier jour inclus au premier jour du mois suivant exclu. Décembre 2011 est partiel. L’import conserve les 541 909 lignes de la source, avec les cinq colonnes utiles au calcul. Jeu de données de Daqing Chen (2015), CC BY 4.0. [UCI Online Retail](https://doi.org/10.24432/C5BW33)
+Indique un mois et son année, ou une plage comme « de janvier à mars 2011 ». Le format `AAAA-MM` fonctionne aussi. Les demandes portant sur d’autres pays, des jours précis, des périodes incomplètes ou plusieurs indicateurs nécessitent une reformulation.
+
+1. Qwen3 4B appelle un outil structuré avec l’indicateur et les bornes de la période.
+2. LangGraph vérifie que l’interprétation correspond à la question et compile le SQL à partir de formules prédéfinies. SQLGlot contrôle la requête puis PostgreSQL l’exécute avec le rôle de lecture.
+3. Streamlit affiche la réponse, le tableau, le graphique pour les séries, la définition métier, la source, le SQL et les étapes d’exécution.
+
+Le chiffre d’affaires est la somme des quantités multipliées par les prix unitaires. Les commandes comptent les factures distinctes avec au moins une ligne éligible. Le panier moyen divise le chiffre d’affaires par ce nombre de factures. Une ligne est éligible si sa facture ne commence pas par `C` et si sa quantité et son prix sont strictement positifs. Les montants sont en livres sterling. Décembre 2011 est partiel et sort du périmètre. L’import conserve les 541 909 lignes, avec les cinq colonnes utiles au calcul. Données de Daqing Chen (2015), CC BY 4.0. [UCI Online Retail](https://doi.org/10.24432/C5BW33)
 
 ### Démarrer localement
 
@@ -34,11 +43,11 @@ Le premier démarrage télécharge environ 2,4 Gio de poids. Le volume Docker co
 .\.venv\Scripts\python.exe scripts/smoke_online_retail.py
 ```
 
-La référence SQL calcule le montant de chaque facture avant de prendre la moyenne. Le test de bout en bout compare les résultats de l’API à cette référence et vérifie aussi le formulaire Streamlit, la clarification des questions incomplètes et le refus d’une modification.
+La référence SQL agrège d’abord les lignes de chaque facture. Le test de bout en bout vérifie les trois indicateurs, les courbes mensuelles, la clarification des questions incomplètes et le refus des opérations non autorisées. Il mesure aussi la latence et le coût de l’API.
 
-Sur le poste de test, les 13 questions sur les douze mois ont donné les montants et nombres de factures attendus. Les cinq cas hors périmètre se sont arrêtés avant toute requête SQL. La latence médiane des 13 analyses était de 4,0 s, avec un maximum de 7,7 s. Le coût d’API était nul.
+Sur le poste de test, les 23 analyses ont donné les résultats attendus. Les 7 demandes à clarifier et les 3 demandes refusées se sont arrêtées avant tout SQL. Les tests Streamlit ont vérifié l’affichage d’un total, d’un graphique et d’un refus. La latence médiane des analyses était de 8,0 s, avec un maximum de 9,8 s. Le coût d’API était nul.
 
-## Démo
+## Démo sur données fictives
 
 ```powershell
 docker compose up --build --wait -d
@@ -54,7 +63,7 @@ Sous Windows, utilise `scripts\docker.ps1` à la place de `docker` si Docker Des
 
 Arrêter la démo avec `docker compose stop`. Les services HTTP sont liés à la boucle locale et PostgreSQL reste sur le réseau Compose. Les comptes et mots de passe fournis par défaut sont réservés à la base de démonstration.
 
-## Périmètre métier
+## Périmètre métier de la démo fictive
 
 | Indicateur | Calcul |
 |---|---|
