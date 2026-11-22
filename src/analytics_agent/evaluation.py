@@ -1,5 +1,6 @@
 import argparse
 import json
+import sys
 from collections import Counter
 from decimal import Decimal
 from math import ceil
@@ -171,7 +172,13 @@ def evaluate_bird(args: argparse.Namespace, settings: Settings):
     agents = {}
     checks: list[dict] = []
     observations = []
-    for case in cases:
+    for index, case in enumerate(cases, 1):
+        if getattr(args, "progress", False):
+            print(
+                f"[{index}/{len(cases)}] {case.db_id}/{case.question_id}",
+                file=sys.stderr,
+                flush=True,
+            )
         if case.db_id not in databases:
             flat = args.db_root / f"{case.db_id}.sqlite"
             path = flat if flat.is_file() else args.db_root / case.db_id / f"{case.db_id}.sqlite"
@@ -249,6 +256,7 @@ def main() -> None:
     bird.add_argument("--ordered", action="store_true")
     bird.add_argument("--no-evidence", action="store_true")
     bird.add_argument("--reference-check", action="store_true")
+    bird.add_argument("--progress", action="store_true", help="Log case IDs to stderr.")
     args = parser.parse_args()
     if args.command == "bird":
         if args.limit < 1:

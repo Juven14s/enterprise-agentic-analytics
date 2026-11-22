@@ -49,6 +49,7 @@ class Catalog(BaseModel):
 class ContextDocument(BaseModel):
     id: str
     text: str
+    schema_sql: str | None = None
 
 
 def _tokens(value: str) -> list[str]:
@@ -66,6 +67,9 @@ class SchemaRetriever:
         table_docs = [
             ContextDocument(
                 id=f"table:{table.name}",
+                schema_sql=f"{_sql_identifier(table.name)} ("
+                + ", ".join(_sql_identifier(name) for name in table.columns)
+                + ")",
                 text=f"Table {_sql_identifier(table.name)} — {table.description}\n"
                 + "\n".join(
                     f"{_sql_identifier(name)}: {description}"
@@ -120,5 +124,8 @@ class SchemaRetriever:
         for doc_id in list(selected):
             for name in self.dependencies.get(doc_id, []):
                 document = self.table_docs[name]
+                selected.setdefault(document.id, document)
+        if len(self.table_docs) <= top_k:
+            for document in self.table_docs.values():
                 selected.setdefault(document.id, document)
         return list(selected.values())
