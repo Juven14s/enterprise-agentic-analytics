@@ -1,0 +1,16 @@
+{
+  "tables": [
+    {"name": "orders", "description": "Commandes de vente / retail orders. Une ligne par commande.",
+     "columns": {"order_id": "Identifiant unique de commande", "customer_id": "Client de la commande", "order_date": "Date de la commande au format ISO", "status": "completed, cancelled ou pending", "net_amount_cents": "Montant net HT en centimes d’euro"}},
+    {"name": "customers", "description": "Clients de démonstration / retail customers. Une ligne par client.",
+     "columns": {"customer_id": "Identifiant unique du client", "region": "Région du client, Nord, Sud ou Ouest"}}
+  ],
+  "relations": [
+    {"id": "orders_customer", "tables": ["orders", "customers"], "definition": "orders.customer_id = customers.customer_id. Plusieurs commandes pour un client."}
+  ],
+  "metrics": [
+    {"id": "net_revenue", "tables": ["orders"], "definition": "Chiffre d’affaires net HT, CA net, net revenue. Somme de net_amount_cents divisée par 100.0, uniquement sur les commandes completed. Unité EUR."},
+    {"id": "completed_orders", "tables": ["orders"], "definition": "Nombre de commandes terminées, complétées, finalisées, completed orders. COUNT(*) sur les commandes au statut completed."},
+    {"id": "average_order_value", "tables": ["orders"], "definition": "Panier moyen net, average order value. Moyenne de net_amount_cents divisée par 100.0, uniquement sur les commandes completed. Unité EUR."}
+  ]
+}

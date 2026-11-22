@@ -1,0 +1,21 @@
+name: CI
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install '.[ui,dev]'
+      - run: ruff check . && ruff format --check .
+      - run: pytest -q
+      - run: docker compose up --build --wait -d
+      - run: python scripts/smoke_compose.py
+      - run: docker compose exec -T api python - < scripts/check_postgres_role.py
+      - if: failure()
+        run: docker compose logs

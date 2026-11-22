@@ -1,0 +1,60 @@
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: analytics_owner
+      POSTGRES_PASSWORD: ${ANALYTICS_OWNER_PASSWORD:-local-owner-demo-only}
+      POSTGRES_DB: analytics
+      ANALYTICS_READER_PASSWORD: ${ANALYTICS_READER_PASSWORD:-local-reader-demo-only}
+    volumes:
+      - analytics_db:/var/lib/postgresql/data
+      - ./docker/init.sh:/docker-entrypoint-initdb.d/10-analytics.sh:ro
+      - ./src/analytics_agent/data/retail.sql:/seed/retail.sql:ro
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -h 127.0.0.1 -U analytics_owner -d analytics']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  api:
+    build: .
+    environment:
+      ANALYTICS_BACKEND: postgres
+      ANALYTICS_PG_HOST: db
+      ANALYTICS_PG_PASSWORD: ${ANALYTICS_READER_PASSWORD:-local-reader-demo-only}
+      ANALYTICS_MODE: ${ANALYTICS_MODE:-demo}
+      ANALYTICS_LLM_MODEL: ${ANALYTICS_LLM_MODEL:-gpt-4.1-mini}
+      ANALYTICS_LLM_BASE_URL: ${ANALYTICS_LLM_BASE_URL:-}
+      ANALYTICS_INPUT_USD_PER_MILLION: ${ANALYTICS_INPUT_USD_PER_MILLION:-}
+      ANALYTICS_OUTPUT_USD_PER_MILLION: ${ANALYTICS_OUTPUT_USD_PER_MILLION:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANALYTICS_LANGSMITH: ${ANALYTICS_LANGSMITH:-false}
+      LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:-}
+      LANGSMITH_PROJECT: ${LANGSMITH_PROJECT:-enterprise-agentic-analytics}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - '127.0.0.1:${ANALYTICS_API_PORT:-8072}:8000'
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=2)"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  ui:
+    build: .
+    command: [streamlit, run, /app/src/analytics_agent/ui.py, --server.address=0.0.0.0, --server.port=8501, --server.headless=true, --browser.gatherUsageStats=false]
+    environment:
+      ANALYTICS_API_URL: http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - '127.0.0.1:${ANALYTICS_UI_PORT:-8572}:8501'
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health', timeout=2)"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  analytics_db:

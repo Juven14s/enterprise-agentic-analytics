@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "enterprise-agentic-analytics"
+version = "0.1.0"
+description = "Auditable agentic analytics over read-only SQL datasets"
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "faiss-cpu>=1.10,<2",
+    "fastapi>=0.115,<1",
+    "httpx>=0.28,<1",
+    "langchain-openai>=1,<2",
+    "langgraph>=1,<2",
+    "langsmith>=0.4,<1",
+    "numpy>=1.26,<3",
+    "psycopg[binary]>=3.2,<4",
+    "pydantic>=2.11,<3",
+    "pydantic-settings>=2.9,<3",
+    "sqlglot==28.10.1",
+    "uvicorn>=0.34,<1",
+]
+
+[project.optional-dependencies]
+ui = ["altair>=5.5,<7", "streamlit>=1.50,<2"]
+dev = ["pytest>=8,<10", "ruff>=0.12,<1"]
+
+[project.scripts]
+analytics-eval = "analytics_agent.evaluation:main"
+
+[tool.setuptools.package-data]
+analytics_agent = ["data/*.json", "data/*.sql"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
